@@ -4,6 +4,7 @@ from app.config import Settings
 from app.publisher import MemoryPublisher
 from app.storage import MemoryImageStorage
 from app.store import ScreeningStore
+from app.api import router
 
 
 def create_app(settings=None, store=None, storage=None, publisher=None):
@@ -18,5 +19,5 @@ def create_app(settings=None, store=None, storage=None, publisher=None):
       if publisher is None:
             app.state.publisher = MemoryPublisher()
       
-      app.include_router()
+      app.include_router(router)
       return app
