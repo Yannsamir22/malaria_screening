@@ -1,0 +1,10 @@
+
+fastapi
+uvicorn[standard]
+pydantic[email]
+PyJWT
+argon2-cffi
+pytest
+httpx
+pyyaml
+jsonschema[format]
