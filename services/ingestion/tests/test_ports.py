@@ -10,8 +10,8 @@ def test_storage_delete_is_harmless():
     storage = MemoryImageStorage()
     storage.delete("does-not-exist")  # should not raise
 
-# def test_publisher_records_event():
-#     from app.store import ScreeningStore  # type: ignore # we haven't written this yet
+def test_publisher_records_event():
+    from app.store import ScreeningStore  # type: ignore # we haven't written this yet
 #     # skip for now — come back after Step 7
 #     pass
 

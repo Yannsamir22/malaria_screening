@@ -1,0 +1,190 @@
+openapi: 3.0.3
+info:
+  title: Malaria Screening - Report Generation API
+  version: 1.0.0
+  description: >
+    Serves the PDF screening reports and triggers notifications. Reports are created by
+    the service itself when an analysis completes (event from the message broker), so
+    there is no operation to create one. Conventions shared by the five services:
+    identifiers are UUIDs minted by the server; timestamps are UTC date-times written
+    with Z; optional fields are omitted, never null; errors are {"detail": string or
+    array}; request bodies reject unknown fields; lists are newest first and paged with
+    limit and offset.
+    Report life cycle - generating -> ready or failed. Download and notification answer
+    409 unless the report is ready.
+servers:
+  - {url: 'http://localhost:8004', description: Local development}
+security:
+  - bearerAuth: []
+tags:
+  - {name: reports, description: Screening reports}
+  - {name: health}
+paths:
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: The service is running
+          content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}
+  /api/v1/reports:
+    get:
+      operationId: listReports
+      tags: [reports]
+      summary: One page of reports, newest first
+      description: Technicians see only reports of screenings they submitted.
+      parameters:
+        - {name: screening_id, in: query, schema: {type: string, format: uuid}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/ReportStatus'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: One page of reports
+          content: {application/json: {schema: {$ref: '#/components/schemas/ReportList'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/reports/{report_id}:
+    parameters: [{$ref: '#/components/parameters/ReportId'}]
+    get:
+      operationId: getReport
+      tags: [reports]
+      summary: Information about one report
+      responses:
+        '200': {$ref: '#/components/responses/OneReport'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/reports/{report_id}/download:
+    parameters: [{$ref: '#/components/parameters/ReportId'}]
+    get:
+      operationId: downloadReport
+      tags: [reports]
+      summary: The PDF of a ready report
+      responses:
+        '200':
+          description: The PDF document
+          content: {application/pdf: {schema: {type: string, format: binary}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/reports/{report_id}/notify:
+    parameters: [{$ref: '#/components/parameters/ReportId'}]
+    post:
+      operationId: notifyReport
+      tags: [reports]
+      summary: Notifies authorized clinicians about a ready report
+      description: >
+        Roles - clinician or administrator. Every recipient must be an active clinician
+        or administrator; the notification is delivered asynchronously, hence 202.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/NotifyRequest'}}}
+      responses:
+        '202':
+          description: The notification was queued
+          content: {application/json: {schema: {$ref: '#/components/schemas/Notification'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    ReportId: {name: report_id, in: path, required: true, schema: {type: string, format: uuid}}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 10}
+    Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+  responses:
+    OneReport:
+      description: The report
+      content: {application/json: {schema: {$ref: '#/components/schemas/Report'}}}
+    Unauthorized:
+      description: Missing, invalid or expired access token
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Forbidden:
+      description: Authenticated, but the role does not allow this
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    NotFound:
+      description: No report has this id
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Conflict:
+      description: The report is not ready
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    UnprocessableEntity:
+      description: The request is malformed
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - {type: string}
+            - {type: array, items: {type: object}}
+    Health:
+      type: object
+      required: [status, service]
+      properties:
+        status: {type: string, enum: [ok]}
+        service: {type: string}
+    ReportStatus: {type: string, enum: [generating, ready, failed]}
+    Channel: {type: string, enum: [in_app, email]}
+    Report:
+      type: object
+      additionalProperties: false
+      required: [id, created, screening_id, analysis_id, status]
+      properties:
+        id: {type: string, format: uuid}
+        created: {type: string, format: date-time}
+        screening_id: {type: string, format: uuid}
+        analysis_id: {type: string, format: uuid}
+        status: {$ref: '#/components/schemas/ReportStatus'}
+        page_count: {type: integer, minimum: 1}
+        size_bytes: {type: integer, minimum: 1}
+        failure_reason: {type: string, minLength: 1, maxLength: 500}
+    ReportList:
+      type: object
+      required: [reports]
+      properties:
+        reports: {type: array, items: {$ref: '#/components/schemas/Report'}}
+    NotifyRequest:
+      type: object
+      additionalProperties: false
+      required: [recipient_ids]
+      properties:
+        recipient_ids:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          items: {type: string, format: uuid}
+        channel:
+          allOf:
+            - {$ref: '#/components/schemas/Channel'}
+          default: in_app
+        message: {type: string, minLength: 1, maxLength: 500}
+    Notification:
+      type: object
+      additionalProperties: false
+      required: [id, created, report_id, recipient_ids, channel, status]
+      properties:
+        id: {type: string, format: uuid}
+        created: {type: string, format: date-time}
+        report_id: {type: string, format: uuid}
+        recipient_ids:
+          type: array
+          items: {type: string, format: uuid}
+        channel: {$ref: '#/components/schemas/Channel'}
+        status: {type: string, enum: [queued, sent, failed]}

@@ -65,7 +65,7 @@ async def get_principal(
       
       return Principal(id=user_id, role=role)
             
-def require_role(*roles: str):
+def require_roles(*roles: str):
       async def check(
             principal: Annotated[Principal, Depends(get_principal)],) -> Principal:
             if principal.role not in roles:

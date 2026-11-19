@@ -53,7 +53,7 @@ class StatusUpdate(BaseModel):
       model_config = {"extra": "forbid"}
       
       status: ScreeningStatus
-      failure_reason: Optional[FailureReason] = None
+      failure_reason: FailureReason = None
       
       @model_validator(mode="after")
       def reason_required_when_failed(self) -> "StatusUpdate":
