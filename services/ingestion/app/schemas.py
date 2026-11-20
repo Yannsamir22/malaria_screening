@@ -38,13 +38,13 @@ class Screening(BaseModel):
       updated: datetime
       status: ScreeningStatus
       smear_type: SmearType
-      region_code: str
+      region_code: str = Field(pattern=REGION_PATTERN)
       image: ImageInfo
       submitted_by: UUID
-      patient_reference: Optional[Reference] = None
-      slide_id: Optional[str] = None
-      facility: Optional[Facility] = None
-      failure_reason: Optional[FailureReason] = None
+      patient_reference: Reference | None = None
+      slide_id: Reference | None = None
+      facility: Facility | None = None
+      failure_reason: FailureReason | None = None
 
 class ScreeningList(BaseModel):
       screenings: list[Screening]
@@ -53,32 +53,10 @@ class StatusUpdate(BaseModel):
       model_config = {"extra": "forbid"}
       
       status: ScreeningStatus
-      failure_reason: FailureReason = None
+      failure_reason: FailureReason | None = None
       
       @model_validator(mode="after")
       def reason_required_when_failed(self) -> "StatusUpdate":
             if self.status == ScreeningStatus.failed and not self.failure_reason:
                   raise ValueError("failure_reason is required when status is failed")
             return self
-
-if __name__ == "__main__":
-    # StatusUpdate: failed needs a reason
-    try:
-        StatusUpdate(status="failed")
-        assert False, "should have raised"
-    except Exception as e:
-        print("caught:", e)
-
-    # StatusUpdate: works fine with reason
-    s = StatusUpdate(status="failed", failure_reason="model crashed")
-    assert s.status == ScreeningStatus.failed
-    print("StatusUpdate OK")
-
-    # StatusUpdate: rejects unknown fields
-    try:
-        StatusUpdate(status="processing", unknown_field="x")
-        assert False, "should have raised"
-    except Exception as e:
-        print("caught extra field:", e)
-
-    print("all models OK")

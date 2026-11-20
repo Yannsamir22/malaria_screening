@@ -8,12 +8,12 @@ def utc_now():
 class ScreeningStore:
       def __init__(self, new_id = uuid.uuid4, clock = utc_now):
             self.new_id = new_id
-            self.clock = clock
-            self._records = {}
+            self._clock = clock
+            self._rows = {}
             
       def add(self, details: dict) -> dict:
             screening_id = self.new_id()
-            now = self.clock()
+            now = self._clock()
             
             record = {
                   **details,
@@ -22,12 +22,12 @@ class ScreeningStore:
                   "updated": now,
                   "status": "pending"
             }
-            self._records[screening_id] = record
+            self._rows[screening_id] = record
             
             return copy.deepcopy(record)
       
       def get(self, screening_id):
-            record = self._records.get(screening_id)
+            record = self._rows.get(screening_id)
             if record is None:
                   return None
             return copy.deepcopy(record)
@@ -36,7 +36,7 @@ class ScreeningStore:
             # 1. Filter records based on provided arguments
             results = [
                   record
-                  for record in self._records.values()
+                  for record in self._rows.values()
                   if(status is None or record.get("status") == status)
                   and (smear_type is None or record.get("smear_type") == smear_type)
                   and (region_code is None or record.get("region_code") == region_code)
@@ -55,7 +55,7 @@ class ScreeningStore:
             return [copy.deepcopy(record) for record in sliced]
       
       def set_status(self, screening_id, status, failure_reason=None):
-            record = self._records.get(screening_id)
+            record = self._rows.get(screening_id)
             
             if record is None:
                   return None
@@ -68,6 +68,9 @@ class ScreeningStore:
             return copy.deepcopy(record)
       
       def remove(self,  screening_id):
-            self._records.pop(screening_id, None)
+            self._rows.pop(screening_id, None)
+
+      def _force_status(self, screening_id, status):
+            self._rows[screening_id]["status"] = status
             
             

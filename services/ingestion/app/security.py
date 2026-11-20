@@ -44,8 +44,8 @@ async def get_principal(
       except jwt.PyJWTError:
             raise _unauthorized()
       
-      # 3. Verify token type is "access"
-      if payload.get("type") != "access":
+      # 3. Verify token kind is "access"
+      if payload.get("kind") != "access":
             raise _unauthorized()
       
       # 4. Parse `sub` claim as a valid UUID

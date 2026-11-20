@@ -1,41 +1,41 @@
-import io
+import hashlib
+
 import pytest
-from PIL import Image
-from app.imaging import inspect_image, ImageRejected
 
-def make_image_bytes(format="PNG", size=(600, 600)):
-      """Helper: create a real in-memory image and return its bytes."""
-      buf = io.BytesIO()
-      Image.new("RGB", size, color=(255, 0, 0)).save(buf, format=format)
-      return buf.getvalue()
+from app.imaging import ImageRejected, inspect_image
+from conftest import make_image
 
-# Test 1: a valid 600x600 PNG returns the right keys
-def test_valid_png_returns_facts():
-      data = make_image_bytes("PNG", (600, 600))
-      result = inspect_image(data, min_side=512)
-      assert result["content_type"] == "image/png"
-      assert result["width"] == 600
-      assert result["height"] == 600
-      assert len(result["sha256"]) == 64
- 
- 
-#  Test 3: a GIF raises ImageRejected  (unsupported format)
-def test_gif_is_rejected():
-      data = make_image_bytes("GIF", (600, 600))
-      with pytest.raises(ImageRejected, match="GIF"): 
-            inspect_image(data, min_side=512)
-            
-# Test 4: a 400x400 image raises ImageRejected (too small)
-def test_too_small_raises():
-      data = make_image_bytes("PNG", (400, 400))
-      with pytest.raises(ImageRejected, match="400x400"):
-            inspect_image(data, min_side=512)
-            
-            
-# Test 5: JPEG and TIFF are accepted
-def test_jpeg_and_tiff_accepted():
-      for fmt, mime in [("JPEG", "image/jpeg"), ("TIFF", "image/tiff")]:
-            data = make_image_bytes(fmt, (600, 600))
-            result = inspect_image(data, min_side=512)
-            assert result["content_type"] == mime
-                  
+pytestmark = pytest.mark.m1
+
+
+def test_a_good_png_gives_its_facts():
+    data = make_image("PNG", (640, 520))
+    assert inspect_image(data, min_side=512) == {
+        "content_type": "image/png", "width": 640, "height": 520,
+        "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+
+
+@pytest.mark.parametrize("fmt,mime", [("JPEG", "image/jpeg"), ("TIFF", "image/tiff")])
+def test_jpeg_and_tiff_are_accepted(fmt, mime):
+    assert inspect_image(make_image(fmt), min_side=512)["content_type"] == mime
+
+
+def test_text_bytes_are_rejected():
+    with pytest.raises(ImageRejected, match="not a readable image"):
+        inspect_image(b"this is not an image", min_side=512)
+
+
+def test_a_truncated_png_is_rejected():
+    with pytest.raises(ImageRejected):
+        inspect_image(make_image()[:200], min_side=512)
+
+
+@pytest.mark.parametrize("fmt", ["GIF", "BMP"])
+def test_other_formats_are_rejected_and_named(fmt):
+    with pytest.raises(ImageRejected, match=fmt):
+        inspect_image(make_image(fmt), min_side=512)
+
+
+def test_a_small_image_is_rejected_with_its_size():
+    with pytest.raises(ImageRejected, match="400x300"):
+        inspect_image(make_image(size=(400, 300)), min_side=512)

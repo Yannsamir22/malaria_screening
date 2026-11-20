@@ -26,3 +26,6 @@ class MemoryImageStorage:
       def delete(self, key: str) -> None:
             # pop with a default of None means: remove if exists, do nothing if not
             self._store.pop(key, None)
+            
+      def __contains__(self, key: str) -> bool:  # lets tests write: key in storage
+        return key in self._store
