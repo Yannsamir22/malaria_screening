@@ -1,0 +1,282 @@
+openapi: 3.0.3
+info:
+  title: Malaria Screening - Public Health Analytics API
+  version: 1.0.0
+  description: >
+    De-identified indicators for malaria surveillance. Screening and analysis data reach
+    this service through the message broker; confirmed cases and population figures are
+    entered through the operations below. Conventions shared by the five services:
+    identifiers are UUIDs minted by the server; timestamps are UTC date-times written
+    with Z; optional fields are omitted, never null; errors are {"detail": string or
+    array}; request bodies reject unknown fields; lists are paged with limit and offset.
+    An AI-positive analysis is never a confirmed case. Only cases recorded through
+    POST /api/v1/analytics/confirmed-cases enter the Annual Parasite Index, computed as
+    confirmed cases in the year divided by the population at risk, times 1000.
+    Regions are ISO 3166-2 codes of Cameroon, for example CM-LT for Littoral.
+servers:
+  - {url: 'http://localhost:8005', description: Local development}
+security:
+  - bearerAuth: []
+tags:
+  - {name: indicators, description: Read-only analytical endpoints}
+  - {name: inputs, description: Confirmed cases and population figures}
+  - {name: health}
+paths:
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: The service is running
+          content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}
+  /api/v1/analytics/annual-parasite-index:
+    get:
+      operationId: getAnnualParasiteIndex
+      tags: [indicators]
+      summary: Annual Parasite Index of one region and year
+      description: >
+        Roles - public_health_officer, clinician or administrator. 404 when no population
+        at risk is recorded for the region and year.
+      parameters:
+        - {$ref: '#/components/parameters/YearQuery'}
+        - name: region_code
+          in: query
+          required: true
+          schema: {$ref: '#/components/schemas/RegionCode'}
+      responses:
+        '200':
+          description: The index
+          content: {application/json: {schema: {$ref: '#/components/schemas/AnnualParasiteIndex'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/analytics/regions:
+    get:
+      operationId: listRegionStatistics
+      tags: [indicators]
+      summary: One page of regional statistics for a year, by region code
+      parameters:
+        - {$ref: '#/components/parameters/YearQuery'}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: One page of regions
+          content: {application/json: {schema: {$ref: '#/components/schemas/RegionList'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/analytics/trends:
+    get:
+      operationId: getTrends
+      tags: [indicators]
+      summary: Screenings, AI-positive results and confirmed cases over time
+      description: 422 when date_to is before date_from. Without region_code the whole country is aggregated.
+      parameters:
+        - {name: region_code, in: query, schema: {$ref: '#/components/schemas/RegionCode'}}
+        - {name: date_from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: date_to, in: query, required: true, schema: {type: string, format: date}}
+        - name: interval
+          in: query
+          schema: {type: string, enum: [week, month], default: month}
+      responses:
+        '200':
+          description: One point per interval, oldest first
+          content: {application/json: {schema: {$ref: '#/components/schemas/TrendList'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/analytics/summary:
+    get:
+      operationId: getSummary
+      tags: [indicators]
+      summary: National totals for one year
+      parameters:
+        - {$ref: '#/components/parameters/YearQuery'}
+      responses:
+        '200':
+          description: The summary
+          content: {application/json: {schema: {$ref: '#/components/schemas/Summary'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/analytics/confirmed-cases:
+    post:
+      operationId: recordConfirmedCase
+      tags: [inputs]
+      summary: Records a confirmed malaria case (clinician or administrator)
+      description: >
+        The record is de-identified: it carries no patient data. When screening_id is
+        given, the same screening cannot be recorded twice (409).
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/ConfirmedCaseIn'}}}
+      responses:
+        '201':
+          description: The recorded case
+          content: {application/json: {schema: {$ref: '#/components/schemas/ConfirmedCase'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/analytics/regions/{region_code}/populations/{year}:
+    parameters:
+      - {name: region_code, in: path, required: true, schema: {$ref: '#/components/schemas/RegionCode'}}
+      - {name: year, in: path, required: true, schema: {$ref: '#/components/schemas/Year'}}
+    put:
+      operationId: setPopulationAtRisk
+      tags: [inputs]
+      summary: Creates or replaces the population at risk of a region and year
+      description: Roles - public_health_officer or administrator.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PopulationIn'}}}
+      responses:
+        '200':
+          description: The stored figure
+          content: {application/json: {schema: {$ref: '#/components/schemas/Population'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    YearQuery: {name: year, in: query, required: true, schema: {$ref: '#/components/schemas/Year'}}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 10}
+    Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+  responses:
+    Unauthorized:
+      description: Missing, invalid or expired access token
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Forbidden:
+      description: Authenticated, but the role does not allow this
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    NotFound:
+      description: No population at risk is recorded for this region and year
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Conflict:
+      description: This screening is already recorded as a confirmed case
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    UnprocessableEntity:
+      description: The request is malformed
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - {type: string}
+            - {type: array, items: {type: object}}
+    Health:
+      type: object
+      required: [status, service]
+      properties:
+        status: {type: string, enum: [ok]}
+        service: {type: string}
+    Year: {type: integer, minimum: 2000, maximum: 2100}
+    RegionCode:
+      type: string
+      pattern: '^CM-[A-Z]{2}$'
+      description: ISO 3166-2 code of a Cameroonian region, for example CM-LT for Littoral.
+    Species: {type: string, enum: [falciparum, vivax, malariae, ovale, knowlesi]}
+    AnnualParasiteIndex:
+      type: object
+      additionalProperties: false
+      required: [year, region_code, confirmed_cases, population_at_risk, annual_parasite_index]
+      properties:
+        year: {$ref: '#/components/schemas/Year'}
+        region_code: {$ref: '#/components/schemas/RegionCode'}
+        confirmed_cases: {type: integer, minimum: 0}
+        population_at_risk: {type: integer, minimum: 1}
+        annual_parasite_index: {type: number, minimum: 0}
+    RegionStats:
+      type: object
+      additionalProperties: false
+      required: [region_code, screenings_total, ai_positive, confirmed_cases]
+      properties:
+        region_code: {$ref: '#/components/schemas/RegionCode'}
+        screenings_total: {type: integer, minimum: 0}
+        ai_positive: {type: integer, minimum: 0}
+        confirmed_cases: {type: integer, minimum: 0}
+        positivity_rate: {type: number, minimum: 0, maximum: 1}
+        population_at_risk: {type: integer, minimum: 1}
+        annual_parasite_index: {type: number, minimum: 0}
+    RegionList:
+      type: object
+      required: [regions]
+      properties:
+        regions: {type: array, items: {$ref: '#/components/schemas/RegionStats'}}
+    TrendPoint:
+      type: object
+      additionalProperties: false
+      required: [period_start, screenings, ai_positive, confirmed_cases]
+      properties:
+        period_start: {type: string, format: date}
+        screenings: {type: integer, minimum: 0}
+        ai_positive: {type: integer, minimum: 0}
+        confirmed_cases: {type: integer, minimum: 0}
+    TrendList:
+      type: object
+      required: [points]
+      properties:
+        points: {type: array, items: {$ref: '#/components/schemas/TrendPoint'}}
+    Summary:
+      type: object
+      additionalProperties: false
+      required: [year, screenings_total, ai_positive, ai_negative, ai_inconclusive, confirmed_cases, regions_reporting]
+      properties:
+        year: {$ref: '#/components/schemas/Year'}
+        screenings_total: {type: integer, minimum: 0}
+        ai_positive: {type: integer, minimum: 0}
+        ai_negative: {type: integer, minimum: 0}
+        ai_inconclusive: {type: integer, minimum: 0}
+        confirmed_cases: {type: integer, minimum: 0}
+        regions_reporting: {type: integer, minimum: 0, maximum: 10}
+        positivity_rate: {type: number, minimum: 0, maximum: 1}
+    ConfirmedCaseIn:
+      type: object
+      additionalProperties: false
+      required: [region_code, confirmed_on, confirmation_method]
+      properties:
+        region_code: {$ref: '#/components/schemas/RegionCode'}
+        confirmed_on: {type: string, format: date}
+        confirmation_method: {type: string, enum: [expert_microscopy, rdt, pcr]}
+        species: {$ref: '#/components/schemas/Species'}
+        screening_id: {type: string, format: uuid}
+    ConfirmedCase:
+      type: object
+      additionalProperties: false
+      required: [id, created, region_code, confirmed_on, confirmation_method]
+      properties:
+        id: {type: string, format: uuid}
+        created: {type: string, format: date-time}
+        region_code: {$ref: '#/components/schemas/RegionCode'}
+        confirmed_on: {type: string, format: date}
+        confirmation_method: {type: string, enum: [expert_microscopy, rdt, pcr]}
+        species: {$ref: '#/components/schemas/Species'}
+        screening_id: {type: string, format: uuid}
+    PopulationIn:
+      type: object
+      additionalProperties: false
+      required: [population_at_risk]
+      properties:
+        population_at_risk: {type: integer, minimum: 1, maximum: 100000000}
+    Population:
+      type: object
+      additionalProperties: false
+      required: [region_code, year, population_at_risk, updated]
+      properties:
+        region_code: {$ref: '#/components/schemas/RegionCode'}
+        year: {$ref: '#/components/schemas/Year'}
+        population_at_risk: {type: integer, minimum: 1, maximum: 100000000}
+        updated: {type: string, format: date-time}

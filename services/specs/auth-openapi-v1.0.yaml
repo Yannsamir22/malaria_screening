@@ -1,0 +1,261 @@
+openapi: 3.0.3
+info:
+  title: Malaria Screening - Authentication and User Management API
+  version: 1.0.0
+  description: >
+    Identities, JWT access tokens and role-based access for the platform.
+    Conventions shared by the five services: identifiers are UUIDs minted by the server;
+    timestamps are UTC date-times written with Z; optional fields are omitted, never null;
+    errors are {"detail": string or array}; request bodies reject unknown fields;
+    lists are newest first and paged with limit and offset.
+servers:
+  - {url: 'http://localhost:8001', description: Local development}
+security:
+  - bearerAuth: []
+tags:
+  - {name: auth, description: 'Registration, login and token refresh'}
+  - {name: users, description: User profiles and roles}
+  - {name: health}
+paths:
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: The service is running
+          content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}
+  /api/v1/auth/register:
+    post:
+      operationId: registerUser
+      tags: [auth]
+      summary: Registers a user (administrator only)
+      description: The new user starts active. Passwords are never returned.
+      requestBody: {$ref: '#/components/requestBodies/RegisterIn'}
+      responses:
+        '201': {$ref: '#/components/responses/OneUser'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/auth/login:
+    post:
+      operationId: loginUser
+      tags: [auth]
+      summary: Authenticates a user and issues a token pair
+      security: []
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/LoginRequest'}}}
+      responses:
+        '200': {$ref: '#/components/responses/Tokens'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshToken
+      tags: [auth]
+      summary: Exchanges a refresh token for a new token pair
+      security: []
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RefreshRequest'}}}
+      responses:
+        '200': {$ref: '#/components/responses/Tokens'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/users/me:
+    get:
+      operationId: getCurrentUser
+      tags: [users]
+      summary: The user who owns the access token
+      responses:
+        '200': {$ref: '#/components/responses/OneUser'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /api/v1/users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: One page of users, newest first (administrator only)
+      parameters:
+        - {name: role, in: query, schema: {$ref: '#/components/schemas/Role'}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/UserStatus'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: One page of users
+          content: {application/json: {schema: {$ref: '#/components/schemas/UserList'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/users/{user_id}:
+    parameters: [{$ref: '#/components/parameters/UserId'}]
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: One user (administrator, or the user themselves)
+      responses:
+        '200': {$ref: '#/components/responses/OneUser'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Changes only the fields present in the body
+      description: >
+        An administrator may change any field. A user may change only their own
+        full_name and facility; changing role without being an administrator is a 403.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/UserPatch'}}}
+      responses:
+        '200': {$ref: '#/components/responses/OneUser'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/users/{user_id}/deactivate:
+    parameters: [{$ref: '#/components/parameters/UserId'}]
+    post:
+      operationId: deactivateUser
+      tags: [users]
+      summary: active -> deactivated (administrator only)
+      description: A deactivated user can no longer log in or refresh a token.
+      responses:
+        '200': {$ref: '#/components/responses/OneUser'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/users/{user_id}/reactivate:
+    parameters: [{$ref: '#/components/parameters/UserId'}]
+    post:
+      operationId: reactivateUser
+      tags: [users]
+      summary: deactivated -> active (administrator only)
+      responses:
+        '200': {$ref: '#/components/responses/OneUser'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    UserId: {name: user_id, in: path, required: true, schema: {type: string, format: uuid}}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 10}
+    Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+  requestBodies:
+    RegisterIn:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/RegisterRequest'}}}
+  responses:
+    OneUser:
+      description: The user
+      content: {application/json: {schema: {$ref: '#/components/schemas/User'}}}
+    Tokens:
+      description: A new token pair
+      content: {application/json: {schema: {$ref: '#/components/schemas/TokenPair'}}}
+    Unauthorized:
+      description: Missing, invalid or expired credentials or token
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Forbidden:
+      description: Authenticated, but the role or account status does not allow this
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    NotFound:
+      description: No user has this id
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Conflict:
+      description: Not allowed in the current state (email already registered, or status already set)
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    UnprocessableEntity:
+      description: The request is malformed
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - {type: string}
+            - {type: array, items: {type: object}}
+    Health:
+      type: object
+      required: [status, service]
+      properties:
+        status: {type: string, enum: [ok]}
+        service: {type: string}
+    Role: {type: string, enum: [administrator, clinician, technician, public_health_officer]}
+    UserStatus: {type: string, enum: [active, deactivated]}
+    Email: {type: string, format: email, maxLength: 254}
+    FullName: {type: string, minLength: 1, maxLength: 120}
+    Facility: {type: string, minLength: 1, maxLength: 120}
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, full_name, password, role]
+      properties:
+        email: {$ref: '#/components/schemas/Email'}
+        full_name: {$ref: '#/components/schemas/FullName'}
+        password: {type: string, format: password, minLength: 12, maxLength: 128}
+        role: {$ref: '#/components/schemas/Role'}
+        facility: {$ref: '#/components/schemas/Facility'}
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: {$ref: '#/components/schemas/Email'}
+        password: {type: string, format: password, minLength: 1, maxLength: 128}
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refresh_token]
+      properties:
+        refresh_token: {type: string, minLength: 1}
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: {type: string}
+        refresh_token: {type: string}
+        token_type: {type: string, enum: [bearer]}
+        expires_in: {type: integer, minimum: 1, description: Lifetime of the access token in seconds}
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, created, email, full_name, role, status]
+      properties:
+        id: {type: string, format: uuid}
+        created: {type: string, format: date-time}
+        email: {$ref: '#/components/schemas/Email'}
+        full_name: {$ref: '#/components/schemas/FullName'}
+        role: {$ref: '#/components/schemas/Role'}
+        status: {$ref: '#/components/schemas/UserStatus'}
+        facility: {$ref: '#/components/schemas/Facility'}
+    UserPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        full_name: {$ref: '#/components/schemas/FullName'}
+        facility: {$ref: '#/components/schemas/Facility'}
+        role: {$ref: '#/components/schemas/Role'}
+    UserList:
+      type: object
+      required: [users]
+      properties:
+        users: {type: array, items: {$ref: '#/components/schemas/User'}}

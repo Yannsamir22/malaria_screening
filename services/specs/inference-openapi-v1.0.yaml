@@ -1,0 +1,251 @@
+openapi: 3.0.3
+info:
+  title: Malaria Screening - AI Inference API
+  version: 1.0.0
+  description: >
+    Submits blood smear screenings for automated analysis and serves the results.
+    The heavy work is done by background workers fed through the message broker; this API
+    only registers requests and exposes their outcome. Conventions shared by the five
+    services: identifiers are UUIDs minted by the server; timestamps are UTC date-times
+    written with Z; optional fields are omitted, never null; errors are
+    {"detail": string or array}; request bodies reject unknown fields; lists are newest
+    first and paged with limit and offset.
+    An analysis is decision support for laboratory professionals. Its outcome is never a
+    confirmed diagnosis and must not be counted as a confirmed case.
+    Parasitemia - thin smear, percentage of infected red blood cells; thick smear,
+    parasites per microliter computed from the parasite and white blood cell counts
+    (the counting assumption is fixed by the model card).
+servers:
+  - {url: 'http://localhost:8003', description: Local development}
+security:
+  - bearerAuth: []
+tags:
+  - {name: inference, description: Analyses of screenings}
+  - {name: models, description: Models available to the workers}
+  - {name: health}
+paths:
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: The service is running
+          content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}
+  /api/v1/inference/analyze:
+    post:
+      operationId: submitAnalysis
+      tags: [inference]
+      summary: Submits a screening for analysis
+      description: >
+        Roles - technician, clinician or administrator. Answers 202 with the analysis in
+        status queued; poll GET /api/v1/inference/{analysis_id}. 404 when the screening is
+        unknown, 409 when it already has a queued, running or completed analysis.
+        Without model_id the active model for the smear type is used.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AnalysisRequest'}}}
+      responses:
+        '202': {$ref: '#/components/responses/OneAnalysis'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/inference:
+    get:
+      operationId: listAnalyses
+      tags: [inference]
+      summary: One page of analyses, newest first
+      parameters:
+        - {name: screening_id, in: query, schema: {type: string, format: uuid}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/AnalysisStatus'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: One page of analyses
+          content: {application/json: {schema: {$ref: '#/components/schemas/AnalysisList'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/inference/{analysis_id}:
+    parameters: [{$ref: '#/components/parameters/AnalysisId'}]
+    get:
+      operationId: getAnalysis
+      tags: [inference]
+      summary: One analysis with its results once completed
+      responses:
+        '200': {$ref: '#/components/responses/OneAnalysis'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/inference/{analysis_id}/heatmap:
+    parameters: [{$ref: '#/components/parameters/AnalysisId'}]
+    get:
+      operationId: getAnalysisHeatmap
+      tags: [inference]
+      summary: The Grad-CAM visualization of a completed analysis
+      description: 409 while the analysis is not completed or when its model produced no heatmap.
+      responses:
+        '200':
+          description: The heatmap overlaid on the analysed image
+          content: {image/png: {schema: {type: string, format: binary}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/models:
+    get:
+      operationId: listModels
+      tags: [models]
+      summary: The models known to the service
+      parameters:
+        - {name: smear_type, in: query, schema: {$ref: '#/components/schemas/SmearType'}}
+      responses:
+        '200':
+          description: The models
+          content: {application/json: {schema: {$ref: '#/components/schemas/ModelList'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    AnalysisId: {name: analysis_id, in: path, required: true, schema: {type: string, format: uuid}}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 10}
+    Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+  responses:
+    OneAnalysis:
+      description: The analysis
+      content: {application/json: {schema: {$ref: '#/components/schemas/Analysis'}}}
+    Unauthorized:
+      description: Missing, invalid or expired access token
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Forbidden:
+      description: Authenticated, but the role does not allow this
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    NotFound:
+      description: No analysis (or screening, on submission) has this id
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Conflict:
+      description: Not allowed in the current state of the analysis or screening
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    UnprocessableEntity:
+      description: The request is malformed
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - {type: string}
+            - {type: array, items: {type: object}}
+    Health:
+      type: object
+      required: [status, service]
+      properties:
+        status: {type: string, enum: [ok]}
+        service: {type: string}
+    SmearType: {type: string, enum: [thin, thick]}
+    AnalysisStatus: {type: string, enum: [queued, running, completed, failed]}
+    Outcome: {type: string, enum: [positive, negative, inconclusive]}
+    Species:
+      type: string
+      enum: [falciparum, vivax, malariae, ovale, knowlesi]
+      description: Present only when the model supports species classification.
+    AnalysisRequest:
+      type: object
+      additionalProperties: false
+      required: [screening_id]
+      properties:
+        screening_id: {type: string, format: uuid}
+        model_id: {type: string, format: uuid}
+    ModelRef:
+      type: object
+      additionalProperties: false
+      required: [id, name, version]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        version: {type: string}
+    Counts:
+      type: object
+      additionalProperties: false
+      description: Thin smears fill the rbc fields and parasitemia_percent; thick smears fill parasites, wbc and parasites_per_microliter.
+      properties:
+        rbc_total: {type: integer, minimum: 0}
+        rbc_infected: {type: integer, minimum: 0}
+        parasitemia_percent: {type: number, minimum: 0, maximum: 100}
+        parasites: {type: integer, minimum: 0}
+        wbc: {type: integer, minimum: 0}
+        parasites_per_microliter: {type: number, minimum: 0}
+    Detection:
+      type: object
+      additionalProperties: false
+      required: [label, confidence, x, y, width, height]
+      properties:
+        label: {type: string, enum: [infected_rbc, parasite, wbc]}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        x: {type: integer, minimum: 0}
+        y: {type: integer, minimum: 0}
+        width: {type: integer, minimum: 1}
+        height: {type: integer, minimum: 1}
+    Analysis:
+      type: object
+      additionalProperties: false
+      required: [id, screening_id, created, status, smear_type, has_heatmap]
+      properties:
+        id: {type: string, format: uuid}
+        screening_id: {type: string, format: uuid}
+        created: {type: string, format: date-time}
+        completed: {type: string, format: date-time}
+        status: {$ref: '#/components/schemas/AnalysisStatus'}
+        smear_type: {$ref: '#/components/schemas/SmearType'}
+        model: {$ref: '#/components/schemas/ModelRef'}
+        outcome: {$ref: '#/components/schemas/Outcome'}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        species: {$ref: '#/components/schemas/Species'}
+        counts: {$ref: '#/components/schemas/Counts'}
+        detections:
+          type: array
+          maxItems: 2000
+          items: {$ref: '#/components/schemas/Detection'}
+        has_heatmap: {type: boolean}
+        failure_reason: {type: string, minLength: 1, maxLength: 500}
+    AnalysisList:
+      type: object
+      required: [analyses]
+      properties:
+        analyses: {type: array, items: {$ref: '#/components/schemas/Analysis'}}
+    Model:
+      type: object
+      additionalProperties: false
+      required: [id, name, version, smear_types, species_supported, status, created]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        version: {type: string}
+        smear_types:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/SmearType'}
+        species_supported:
+          type: array
+          items: {$ref: '#/components/schemas/Species'}
+        status: {type: string, enum: [active, retired]}
+        created: {type: string, format: date-time}
+    ModelList:
+      type: object
+      required: [models]
+      properties:
+        models: {type: array, items: {$ref: '#/components/schemas/Model'}}

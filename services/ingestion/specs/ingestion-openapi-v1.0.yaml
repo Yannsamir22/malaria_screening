@@ -1,0 +1,247 @@
+openapi: 3.0.3
+info:
+  title: Malaria Screening - Ingestion and Orchestration API
+  version: 1.0.0
+  description: >
+    Receives thick and thin blood smear images, validates and stores them, registers a
+    screening and hands it to the inference workers. Conventions shared by the five
+    services: identifiers are UUIDs minted by the server; timestamps are UTC date-times
+    written with Z; optional fields are omitted, never null; errors are
+    {"detail": string or array}; request bodies reject unknown fields; lists are newest
+    first and paged with limit and offset.
+    patient_reference is a pseudonymous reference chosen by the laboratory, never a name.
+    Screening life cycle - pending -> processing -> completed or failed. Only the
+    processing workers move a screening between statuses (service accounts, through
+    PATCH .../status); every other (status, target) pair answers 409.
+servers:
+  - {url: 'http://localhost:8002', description: Local development}
+security:
+  - bearerAuth: []
+tags:
+  - {name: screenings, description: Upload and follow blood smear screenings}
+  - {name: internal, description: Service-to-service operations}
+  - {name: health}
+paths:
+  /api/v1/health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: The service is running
+          content: {application/json: {schema: {$ref: '#/components/schemas/Health'}}}
+  /api/v1/screenings:
+    get:
+      operationId: listScreenings
+      tags: [screenings]
+      summary: One page of screenings, newest first
+      description: >
+        Roles - administrators and clinicians see all screenings; a technician sees
+        only the screenings they submitted; any other role gets 403.
+      parameters:
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/ScreeningStatus'}}
+        - {name: smear_type, in: query, schema: {$ref: '#/components/schemas/SmearType'}}
+        - {name: region_code, in: query, schema: {$ref: '#/components/schemas/RegionCode'}}
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Offset'}
+      responses:
+        '200':
+          description: One page of screenings
+          content: {application/json: {schema: {$ref: '#/components/schemas/ScreeningList'}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+    post:
+      operationId: createScreening
+      tags: [screenings]
+      summary: Uploads a blood smear image and registers a screening
+      description: >
+        Roles - technician or administrator. The image must be PNG, JPEG or TIFF of at
+        most 20 MB and pass the quality checks (readable, minimum dimensions); an
+        image that fails them is a 422 whose detail names the problem. The server sets
+        id, created, status (pending) and submitted_by.
+      requestBody: {$ref: '#/components/requestBodies/ScreeningIn'}
+      responses:
+        '201': {$ref: '#/components/responses/OneScreening'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/screenings/{screening_id}:
+    parameters: [{$ref: '#/components/parameters/ScreeningId'}]
+    get:
+      operationId: getScreening
+      tags: [screenings]
+      summary: One screening
+      description: >
+        Roles - administrators, clinicians and service accounts read any screening; a
+        technician reads only their own (403 otherwise); other roles get 403.
+      responses:
+        '200': {$ref: '#/components/responses/OneScreening'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+    delete:
+      operationId: deleteScreening
+      tags: [screenings]
+      summary: Deletes a screening and its image (administrator only)
+      description: Supports the retention and deletion policy. Refused while the screening is processing.
+      responses:
+        '204': {description: 'Deleted; no body'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/screenings/{screening_id}/image:
+    parameters: [{$ref: '#/components/parameters/ScreeningId'}]
+    get:
+      operationId: getScreeningImage
+      tags: [screenings]
+      summary: The original uploaded image
+      description: Same access rules as getScreening.
+      responses:
+        '200':
+          description: The image, in the format it was uploaded
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/tiff: {schema: {type: string, format: binary}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+  /api/v1/screenings/{screening_id}/status:
+    parameters: [{$ref: '#/components/parameters/ScreeningId'}]
+    patch:
+      operationId: updateScreeningStatus
+      tags: [internal]
+      summary: Moves a screening to its next status (service accounts only)
+      description: >
+        Legal moves - pending to processing; processing to completed; processing to
+        failed (failure_reason required). Any other move answers 409.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/StatusUpdate'}}}
+      responses:
+        '200': {$ref: '#/components/responses/OneScreening'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    ScreeningId: {name: screening_id, in: path, required: true, schema: {type: string, format: uuid}}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 10}
+    Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+  requestBodies:
+    ScreeningIn:
+      required: true
+      content:
+        multipart/form-data:
+          schema: {$ref: '#/components/schemas/ScreeningCreate'}
+          encoding:
+            image: {contentType: 'image/png, image/jpeg, image/tiff'}
+  responses:
+    OneScreening:
+      description: The screening
+      content: {application/json: {schema: {$ref: '#/components/schemas/Screening'}}}
+    Unauthorized:
+      description: Missing, invalid or expired access token
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Forbidden:
+      description: Authenticated, but the role does not allow this
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    NotFound:
+      description: No screening has this id
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Conflict:
+      description: Not allowed in the screening's current status
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    PayloadTooLarge:
+      description: The image is larger than 20 MB
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    UnprocessableEntity:
+      description: The request is malformed
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  schemas:
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - {type: string}
+            - {type: array, items: {type: object}}
+    Health:
+      type: object
+      required: [status, service]
+      properties:
+        status: {type: string, enum: [ok]}
+        service: {type: string}
+    SmearType: {type: string, enum: [thin, thick]}
+    ScreeningStatus: {type: string, enum: [pending, processing, completed, failed]}
+    RegionCode:
+      type: string
+      pattern: '^CM-[A-Z]{2}$'
+      description: ISO 3166-2 code of a Cameroonian region, for example CM-LT for Littoral.
+    Reference: {type: string, minLength: 1, maxLength: 64}
+    Facility: {type: string, minLength: 1, maxLength: 120}
+    ScreeningCreate:
+      type: object
+      required: [image, smear_type, region_code]
+      properties:
+        image: {type: string, format: binary}
+        smear_type: {$ref: '#/components/schemas/SmearType'}
+        region_code: {$ref: '#/components/schemas/RegionCode'}
+        patient_reference: {$ref: '#/components/schemas/Reference'}
+        slide_id: {$ref: '#/components/schemas/Reference'}
+        facility: {$ref: '#/components/schemas/Facility'}
+    ImageInfo:
+      type: object
+      additionalProperties: false
+      required: [content_type, width, height, size_bytes, sha256]
+      properties:
+        content_type: {type: string, enum: [image/png, image/jpeg, image/tiff]}
+        width: {type: integer, minimum: 1}
+        height: {type: integer, minimum: 1}
+        size_bytes: {type: integer, minimum: 1, maximum: 20971520}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    Screening:
+      type: object
+      additionalProperties: false
+      required: [id, created, updated, status, smear_type, region_code, image, submitted_by]
+      properties:
+        id: {type: string, format: uuid}
+        created: {type: string, format: date-time}
+        updated: {type: string, format: date-time}
+        status: {$ref: '#/components/schemas/ScreeningStatus'}
+        smear_type: {$ref: '#/components/schemas/SmearType'}
+        region_code: {$ref: '#/components/schemas/RegionCode'}
+        image: {$ref: '#/components/schemas/ImageInfo'}
+        submitted_by: {type: string, format: uuid}
+        patient_reference: {$ref: '#/components/schemas/Reference'}
+        slide_id: {$ref: '#/components/schemas/Reference'}
+        facility: {$ref: '#/components/schemas/Facility'}
+        failure_reason: {type: string, minLength: 1, maxLength: 500}
+    ScreeningList:
+      type: object
+      required: [screenings]
+      properties:
+        screenings: {type: array, items: {$ref: '#/components/schemas/Screening'}}
+    StatusUpdate:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {$ref: '#/components/schemas/ScreeningStatus'}
+        failure_reason: {type: string, minLength: 1, maxLength: 500}
